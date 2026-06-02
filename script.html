@@ -9,7 +9,7 @@
 <body>
   <div class="container">
     <button class="btn back-btn" onclick="goBack()">← ย้อนกลับ</button>
-    <h1>🎤 แปลงเสียงเป็นข้อความ (Local AI)</h1>
+    <h1>🎤 แปลงเสียงเป็นข้อความ</h1>
     
     <div id="statusBadge" class="status-badge st-idle">
       <span class="dot"></span>
@@ -26,6 +26,7 @@
 
     <p class="section-label">⚙️ ตั้งค่าการถอดรหัสเสียง</p>
     <div style="background: #f9f9f9; padding: 12px; border-radius: 12px; border: 1px solid #eaeaea; font-size: 13px;">
+
       <div style="margin-bottom: 8px;">
         <label style="font-weight: bold; color: #444;">🌐 ภาษาในไฟล์เสียง:</label>
         <select id="sourceLang" style="width: 100%; padding: 6px; margin-top: 4px; border-radius: 6px; border: 1px solid #ccc;">
@@ -64,9 +65,7 @@
     <div class="file-box" onclick="document.getElementById('mediaFile').click()">
       <p>📁 คลิกเพื่อเลือกไฟล์เสียง / วิดีโอ</p>
       <p class="file-hint">.mp3 · .wav · .m4a · .mp4 · .mov</p>
-      
       <input type="file" id="mediaFile" accept=".mp3,.wav,.m4a,.mp4,.mov,audio/*,video/*" style="display:none">
-      
       <div class="file-name" id="mediaName">ยังไม่ได้เลือกไฟล์</div>
     </div>
     

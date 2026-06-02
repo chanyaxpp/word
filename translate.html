@@ -5,36 +5,33 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
   <title>Translate - ระบบแปลภาษาอัจฉริยะ</title>
-  
   <link rel="stylesheet" href="style.css">
-
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
 </head>
 
 <body>
-
   <div class="container">
-    <button class="btn back-btn" onclick="goBack()">
-      ← ย้อนกลับ
-    </button>
+    <button class="btn back-btn" onclick="goBack()">← ย้อนกลับ</button>
 
     <h1>🌍 แปลภาษา</h1>
 
-    <p class="section-label">พิมพ์ข้อความ หรือ ดึงข้อความอัตโนมัติจากเสียง</p>
-    <textarea id="inputText" placeholder="พิมพ์ข้อความตรงนี้ หรือระบบจะถอดเสียงจากไฟล์เสียงมาใส่ในกล่องนี้ให้อัตโนมัติ..."></textarea>
-
-    <p class="section-label">📂 เลือกไฟล์ <span class="tip">(.txt, .pdf, รูปภาพ, เสียง, วิดีโอ)</span></p>
+    <!-- ขั้นที่ 1 -->
+    <p class="section-label">📂 ขั้นที่ 1 — เลือกไฟล์หรือพิมพ์ข้อความ <span class="tip">(.txt, .pdf, รูปภาพ, เสียง, วิดีโอ)</span></p>
     <div class="file-box" onclick="document.getElementById('fileInput').click()">
       <p>📁 คลิกเพื่อเลือกไฟล์เพื่อดึงข้อความ</p>
       <p class="file-hint">รองรับเอกสาร, รูปภาพ, เสียง (.mp3, .wav) และวิดีโอ</p>
       <input type="file" id="fileInput" accept=".txt,.pdf,.jpg,.jpeg,.png,.mp4,.mov,.mp3,.wav,.m4a,video/*,audio/*" style="display: none;">
-      <div class="file-name" id="fileName">
-        ยังไม่ได้เลือกไฟล์
-      </div>
+      <div class="file-name" id="fileName">ยังไม่ได้เลือกไฟล์</div>
     </div>
 
-    <p class="section-label">🎯 เลือกภาษาปลายทางที่ต้องการแปล</p>
+    <p class="section-label" style="margin-top:14px;">✏️ ข้อความต้นฉบับ (แก้ไขได้)</p>
+    <textarea id="inputText" placeholder="พิมพ์ข้อความตรงนี้ หรือเลือกไฟล์เสียง/เอกสารด้านบนเพื่อดึงข้อความอัตโนมัติ..."></textarea>
+
+    <!-- ขั้นที่ 2 -->
+    <div class="divider"></div>
+    <p class="section-label">🌍 ขั้นที่ 2 — เลือกภาษาและกดแปล</p>
+
     <select id="language">
       <option value="th">แปลเป็น: ภาษาไทย (Thai)</option>
       <option value="en">แปลเป็น: English (อังกฤษ)</option>
@@ -43,11 +40,11 @@
       <option value="ja">แปลเป็น: 日本語 (ญี่ปุ่น)</option>
     </select>
 
-    <button class="btn" onclick="translateText()">
-      🚀 เริ่มแปลภาษา
+    <button class="btn confirm-btn" onclick="translateText()" style="margin-top:12px;">
+      🚀 แปลภาษา
     </button>
 
-    <button class="btn stop-btn" onclick="resetTranslate()" style="margin-top: 10px; background: #757575;">
+    <button class="btn stop-btn" onclick="resetTranslate()" style="margin-top:10px; background:#757575;">
       🔄 รีเซ็ตหน้าจอ
     </button>
 
@@ -60,5 +57,6 @@
   </div>
 
   <script src="translate.js"></script>
+
 </body>
 </html>

@@ -1,5 +1,5 @@
 from flask import Flask, request, jsonify, Response
-from transformers import pipeline
+from transformers import pipeline, AutoModelForSpeechSeq2Seq, AutoProcessor
 from flask_cors import CORS
 import os
 import tempfile
@@ -15,27 +15,42 @@ CORS(app)
 
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
 
-# ── ตั้งค่า device อัตโนมัติ: CUDA ถ้ามี, ไม่งั้นใช้ CPU ──
-DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
-TORCH_DTYPE = torch.float16 if DEVICE == "cuda" else torch.float32
+# ── ตั้งค่า device: CUDA > MPS (Apple Silicon M1/M2/M3) > CPU ──
+if torch.cuda.is_available():
+    DEVICE = "cuda"
+elif torch.backends.mps.is_available():
+    DEVICE = "mps"
+else:
+    DEVICE = "cpu"
 
-# ── โหลด Typhoon Isan ASR Whisper จาก HuggingFace ──
-TYPHOON_ISAN_MODEL = os.environ.get("TYPHOON_ISAN_MODEL", "scb10x/typhoon-isan-asr-whisper")
+TORCH_DTYPE = torch.float16 if DEVICE in ("cuda", "mps") else torch.float32
 
-print(f"กำลังโหลดโมเดล Typhoon Isan ASR ({TYPHOON_ISAN_MODEL}) | device={DEVICE} | dtype={TORCH_DTYPE}")
-asr_pipeline = pipeline(
-    "automatic-speech-recognition",
-    model=TYPHOON_ISAN_MODEL,
-    device=DEVICE,
-    dtype=TORCH_DTYPE,
-)
-print("โมเดล Typhoon Isan พร้อมใช้งานแล้ว!")
+print(f"✅ ใช้ device: {DEVICE} | dtype: {TORCH_DTYPE}")
+
+# ── โหลด 2 โมเดลพร้อมกันตอน start ──
+MODELS = {
+    "typhoon":    "scb10x/typhoon-isan-asr-whisper",
+    "whisper_th": "biodatlab/whisper-th-medium-combined",
+}
+
+asr_pipelines = {}
+for key, model_name in MODELS.items():
+    print(f"กำลังโหลดโมเดล [{key}] {model_name} | device={DEVICE} ...")
+    asr_pipelines[key] = pipeline(
+        "automatic-speech-recognition",
+        model=model_name,
+        device=DEVICE,
+        dtype=TORCH_DTYPE,
+        # เพิ่ม batch_size เพื่อประมวลผลเร็วขึ้น
+        batch_size=8 if DEVICE in ("cuda", "mps") else 4,
+    )
+    print(f"✅ โมเดล [{key}] พร้อมใช้งานแล้ว!")
 
 ALLOWED_EXTENSIONS = {'.mp3', '.wav', '.m4a', '.mp4', '.mov', '.ogg', '.flac', '.webm'}
 
 TH_WORD_REPAIR = {
-    "น้ำต่อหู": "น้ำเต้าหู้",
-    "ทวนลือง": "ถั่วเหลือง",
+    "น้ำต่อหู":  "น้ำเต้าหู้",
+    "ทวนลือง":   "ถั่วเหลือง",
     "น้ำต้มหู้": "น้ำเต้าหู้",
     "ทัวเหลือง": "ถั่วเหลือง",
     "ทวนเหลือง": "ถั่วเหลือง",
@@ -137,24 +152,28 @@ def google_translate(text, target_lang):
         print(f"Google Translate Error: {e}")
         return text
 
-def transcribe_chunk(chunk_path, offset=0.0, task="transcribe", source_lang=None):
-    """ถอดเสียง 1 chunk ด้วย Typhoon Isan ASR Whisper"""
+def transcribe_chunk(chunk_path, offset=0.0, task="transcribe", source_lang=None, model_key="typhoon"):
+    """ถอดเสียง 1 chunk — เลือกโมเดลได้ด้วย model_key พร้อม MPS/CUDA optimization"""
     try:
+        selected_pipeline = asr_pipelines.get(model_key, asr_pipelines["typhoon"])
+
         gen_kwargs = {}
         if task == "translate":
             gen_kwargs["task"] = "translate"
 
-        if gen_kwargs:
-            result = asr_pipeline(
-                chunk_path,
-                return_timestamps=True,
-                generate_kwargs=gen_kwargs,
-            )
-        else:
-            result = asr_pipeline(
-                chunk_path,
-                return_timestamps=True,
-            )
+        # ใช้ torch.inference_mode() เพื่อเร็วขึ้นและประหยัด memory
+        with torch.inference_mode():
+            if gen_kwargs:
+                result = selected_pipeline(
+                    chunk_path,
+                    return_timestamps=True,
+                    generate_kwargs=gen_kwargs,
+                )
+            else:
+                result = selected_pipeline(
+                    chunk_path,
+                    return_timestamps=True,
+                )
 
         full_text = repair_text(result["text"].strip())
 
@@ -171,13 +190,15 @@ def transcribe_chunk(chunk_path, offset=0.0, task="transcribe", source_lang=None
                     "text":  seg_text,
                 })
 
-        detected_language = "th/isan"
+        detected_language = "th/isan" if model_key == "typhoon" else "th/en"
         return full_text, segments, detected_language
 
     finally:
         gc.collect()
         if DEVICE == "cuda" and torch.cuda.is_available():
             torch.cuda.empty_cache()
+        elif DEVICE == "mps":
+            torch.mps.empty_cache()
 
 @app.route("/ping", methods=["GET"])
 def ping():
@@ -193,11 +214,12 @@ def translate_text():
 
 @app.route("/transcribe", methods=["POST"])
 def transcribe_simple():
-    """Route สำหรับ fallback ใน translate.js — ถอดเสียงแบบไม่ streaming"""
+    """Route สำหรับ fallback — ถอดเสียงแบบไม่ streaming"""
     if "audio" not in request.files:
         return jsonify({"error": "ไม่พบไฟล์"}), 400
 
     audio_file = request.files["audio"]
+    model_key = request.form.get("model", "typhoon")
     ext = os.path.splitext(audio_file.filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
         return jsonify({"error": f"ไม่รองรับ {ext}"}), 400
@@ -214,7 +236,7 @@ def transcribe_simple():
             "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", tmp_wav_path
         ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
-        text, segments, detected_lang = transcribe_chunk(tmp_wav_path, offset=0.0)
+        text, segments, detected_lang = transcribe_chunk(tmp_wav_path, offset=0.0, model_key=model_key)
         return jsonify({"text": text, "segments": segments, "language": detected_lang})
 
     except Exception as e:
@@ -232,10 +254,11 @@ def transcribe_stream():
     if "audio" not in request.files:
         return jsonify({"error": "ไม่พบไฟล์"}), 400
 
-    audio_file = request.files["audio"]
+    audio_file  = request.files["audio"]
     source_lang = request.form.get("source_lang", "auto")
-    mode = request.form.get("mode", "original")
+    mode        = request.form.get("mode", "original")
     target_lang = request.form.get("target_lang", "th")
+    model_key   = request.form.get("model", "typhoon")
 
     ext = os.path.splitext(audio_file.filename)[1].lower()
     if ext not in ALLOWED_EXTENSIONS:
@@ -252,40 +275,48 @@ def transcribe_stream():
         try:
             yield f"data: {json.dumps({'type':'progress','pct':3,'msg':'กำลังแปลงไฟล์เสียง...'})}\n\n"
 
+            # แปลงไฟล์เสียงและ normalize ให้เหมาะกับ ASR
             subprocess.run([
                 "ffmpeg", "-y", "-i", tmp_upload_path,
-                "-ar", "16000", "-ac", "1", "-c:a", "pcm_s16le", tmp_wav_path
+                "-ar", "16000", "-ac", "1",
+                "-af", "highpass=f=80,lowpass=f=8000,volume=1.5",
+                "-c:a", "pcm_s16le", tmp_wav_path
             ], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
 
-            duration = get_audio_duration(tmp_wav_path)
-            splits = detect_silence_splits(tmp_wav_path, target_chunk=30)
+            duration   = get_audio_duration(tmp_wav_path)
+            # ไฟล์สั้น (<3 นาที) ใช้ chunk ใหญ่ขึ้นเพื่อลดจำนวนรอบ
+            chunk_size = 60 if duration < 180 else 30
+            splits     = detect_silence_splits(tmp_wav_path, target_chunk=chunk_size)
             total_chunks = len(splits)
 
-            yield f"data: {json.dumps({'type':'progress','pct':8,'msg':f'แบ่งออกเป็น {total_chunks} ส่วนเพื่อประมวลผล...'})}\n\n"
+            yield f"data: {json.dumps({'type':'progress','pct':8,'msg':f'ไฟล์ยาว {duration:.0f} วินาที แบ่งเป็น {total_chunks} ส่วน...'})}\n\n"
 
             for i, (start, end) in enumerate(splits):
                 chunk_path = tmp_wav_path + f"_chunk{i}.wav"
                 chunk_paths.append(chunk_path)
                 extract_chunk(tmp_wav_path, start, end, chunk_path)
 
-            all_texts = []
-            all_segments = []
+            all_texts        = []
+            all_segments     = []
             final_detected_lang = "th/isan"
 
             for i, (start, end) in enumerate(splits):
                 pct = 12 + int(((i + 0.5) / total_chunks) * 83)
-                yield f"data: {json.dumps({'type':'progress','pct':pct,'msg':f'กำลังวิเคราะห์และถอดเสียงส่วนที่ {i+1}/{total_chunks}...'})}\n\n"
+                yield f"data: {json.dumps({'type':'progress','pct':pct,'msg':f'ถอดเสียงส่วนที่ {i+1}/{total_chunks} [{model_key}]...'})}\n\n"
 
                 whisper_task = "translate" if (mode == "translate" and target_lang == "en") else "transcribe"
-                text, segs, det_lang = transcribe_chunk(chunk_paths[i], offset=start, task=whisper_task, source_lang=source_lang)
+                text, segs, det_lang = transcribe_chunk(
+                    chunk_paths[i], offset=start,
+                    task=whisper_task, source_lang=source_lang,
+                    model_key=model_key
+                )
 
                 if i == 0:
                     final_detected_lang = det_lang
 
+                # แปลแบบ batch ครั้งเดียวตอนจบ chunk ไม่แปลทีละ segment
                 if mode == "translate" and target_lang != "en":
                     text = google_translate(text, target_lang)
-                    for seg in segs:
-                        seg["text"] = google_translate(seg["text"], target_lang)
 
                 all_texts.append(text)
                 all_segments.extend(segs)
@@ -296,7 +327,7 @@ def transcribe_stream():
                 yield f"data: {json.dumps({'type':'chunk_done','pct':done_pct,'chunk_index':i,'chunk_text':text})}\n\n"
 
             final_text = " ".join(t for t in all_texts if t).strip()
-            yield f"data: {json.dumps({'type':'done','pct':100,'text':final_text,'segments':all_segments,'language':final_detected_lang,'total_chunks':total_chunks})}\n\n"
+            yield f"data: {json.dumps({'type':'done','pct':100,'text':final_text,'segments':all_segments,'language':final_detected_lang,'total_chunks':total_chunks,'model':model_key})}\n\n"
 
         except Exception as e:
             err_detail = traceback.format_exc()

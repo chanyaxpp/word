@@ -17,6 +17,10 @@ async function processUploadedFile(file) {
   const targetTextarea = document.getElementById("inputText");
   const fileNameLower = file.name.toLowerCase();
   const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+
+  // รีเซ็ตผลลัพธ์เก่าออก
+  document.getElementById("resultText").innerText = "ผลลัพธ์จากการแปลภาษาจะแสดงตรงนี้...";
+
   targetTextarea.value = `⏳ กำลังดึงข้อมูลจากไฟล์ ${file.name} (${sizeMB} MB)...`;
 
   try {
@@ -36,7 +40,7 @@ async function processUploadedFile(file) {
           const textContent = await page.getTextContent();
           fullText += textContent.items.map(item => item.str).join(" ") + "\n";
         }
-        targetTextarea.value = fullText.trim() || "⚠️ ไม่พบข้อความในไฟล์ PDF นี้ (อาจเป็นหน้าสแกนแบบรูปภาพ)";
+        targetTextarea.value = fullText.trim() || "⚠️ ไม่พบข้อความในไฟล์ PDF นี้";
       };
       reader.readAsArrayBuffer(file);
 
@@ -46,8 +50,8 @@ async function processUploadedFile(file) {
       targetTextarea.value = result.data.text.trim() || "⚠️ ไม่พบข้อความในรูปภาพ";
 
     } else if (/\.(mp3|wav|m4a|mp4|mov|ogg|flac|webm)$/.test(fileNameLower)) {
-      // เรียกฟังก์ชันแปลงเสียงที่แก้ไขใหม่ (Auto-Detect ภาษา)
-      await transcribeFileForTranslate(file, targetTextarea);
+      // ถอดเสียงก่อน — ไม่แปลอัตโนมัติ รอให้ผู้ใช้กดแปลเอง
+      await transcribeOnly(file, targetTextarea);
 
     } else {
       targetTextarea.value = "❌ ไม่รองรับไฟล์ประเภทนี้";
@@ -57,18 +61,22 @@ async function processUploadedFile(file) {
   }
 }
 
-// ── ฟังก์ชันถอดเสียงแก้ใหม่: ตรวจจับภาษาอัตโนมัติ ➔ ดึงข้อความต้นฉบับ ➔ แปลทันที ──
-async function transcribeFileForTranslate(file, textarea) {
+// ── ขั้นที่ 1: ถอดเสียงอย่างเดียว ไม่แปลอัตโนมัติ ──
+async function transcribeOnly(file, textarea) {
   const sizeMB = (file.size / 1024 / 1024).toFixed(1);
   textarea.value = `⏳ กำลังส่งไฟล์เสียง (${sizeMB} MB) ไปยังเซิร์ฟเวอร์...`;
 
+  const modelSelect = document.getElementById("modelSelect");
+  const modelKey = modelSelect ? modelSelect.value : "typhoon";
+
   const formData = new FormData();
   formData.append("audio", file);
-  formData.append("source_lang", "auto"); // 💥 บังคับส่งเป็น auto เพื่อตรวจจับภาษาดั้งเดิม
-  formData.append("mode", "original");    // ให้ดึงข้อความภาษาต้นฉบับออกมาก่อน
+  formData.append("source_lang", "auto");
+  formData.append("mode", "original");
+  formData.append("model", modelKey);
 
-  let partialText = "";
   let chunkTexts = {};
+  let partialText = "";
   let totalChunks = 0;
 
   try {
@@ -99,27 +107,20 @@ async function transcribeFileForTranslate(file, textarea) {
 
         } else if (evt.type === "segment") {
           partialText += evt.seg.text + " ";
-          textarea.value = `⏳ กำลังวิเคราะห์และถอดเสียงส่วนที่ ${(evt.chunk_index||0)+1}/${totalChunks||'?'}...\n\n${partialText.trim()}`;
+          textarea.value = `⏳ กำลังถอดเสียงส่วนที่ ${(evt.chunk_index||0)+1}/${totalChunks||'?'}...\n\n${partialText.trim()}`;
 
         } else if (evt.type === "chunk_done") {
           if (evt.total_chunks) totalChunks = evt.total_chunks;
           chunkTexts[evt.chunk_index] = evt.chunk_text;
           const doneCount = Object.keys(chunkTexts).length;
-          textarea.value = `⏳ ประมวลผลเสร็จแล้ว ${doneCount}/${totalChunks} ส่วน...\n\n${Object.values(chunkTexts).join(" ").trim()}`;
+          textarea.value = `⏳ ถอดเสียงเสร็จแล้ว ${doneCount}/${totalChunks} ส่วน...\n\n${Object.values(chunkTexts).join(" ").trim()}`;
 
         } else if (evt.type === "done") {
-          const detectedLang = evt.language ? evt.language.toUpperCase() : "AUTO";
-          
-          // แสดงผลข้อความต้นฉบับที่แท้จริงในกล่องข้อความ
+          // ✅ ถอดเสียงเสร็จ — แสดงข้อความในกล่อง รอผู้ใช้กดแปลเอง
           textarea.value = evt.text;
-          
-          // แสดงสถานะที่กล่องแปลภาษา แล้วทำการกดแปลภาษาให้ทันที
-          const resultText = document.getElementById("resultText");
-          resultText.innerHTML = `<span style="color:#2196F3;">🔍 ตรวจพบเสียงภาษา: <b>${detectedLang}</b><br>กำลังเริ่มแปลภาษาให้คุณอัตโนมัติ...</span>`;
-          
-          setTimeout(() => {
-            translateText();
-          }, 500);
+          document.getElementById("resultText").innerHTML =
+            `<span style="color:#4CAF50;">✅ ถอดเสียงเสร็จแล้ว! กดปุ่ม <b>🚀 แปลภาษา</b> ด้านบนเพื่อแปลข้อความได้เลยครับ</span>`;
+
         } else if (evt.type === "error") {
           throw new Error(evt.msg);
         }
@@ -127,16 +128,18 @@ async function transcribeFileForTranslate(file, textarea) {
     }
 
   } catch (err) {
-    textarea.value = "⏳ ระบบตรวจจับอัตโนมัติกำลังประมวลผล (Fallback)...";
-    const formData2 = new FormData();
-    formData2.append("audio", file);
-    formData2.append("source_lang", "auto");
+    // Fallback: ลองเรียก /transcribe แบบปกติ
+    textarea.value = "⏳ กำลังลองถอดเสียงแบบ fallback...";
     try {
+      const formData2 = new FormData();
+      formData2.append("audio", file);
+      formData2.append("source_lang", "auto");
       const res = await fetch(`${PYTHON_SERVER_URL}/transcribe`, { method: "POST", body: formData2 });
       const data = await res.json();
-      if(data.text) {
+      if (data.text) {
         textarea.value = data.text;
-        translateText();
+        document.getElementById("resultText").innerHTML =
+          `<span style="color:#4CAF50;">✅ ถอดเสียงเสร็จแล้ว! กดปุ่ม <b>🚀 แปลภาษา</b> ด้านบนเพื่อแปลได้เลยครับ</span>`;
       } else {
         textarea.value = "❌ ถอดเสียงไม่สำเร็จ";
       }
@@ -146,13 +149,14 @@ async function transcribeFileForTranslate(file, textarea) {
   }
 }
 
+// ── ขั้นที่ 2: แปลภาษา — ส่งข้อความทั้งหมดครั้งเดียว ──
 async function translateText() {
-  const text = document.getElementById("inputText").value.strip ? document.getElementById("inputText").value.trim() : document.getElementById("inputText").value;
+  const text = document.getElementById("inputText").value.trim();
   const targetLang = document.getElementById("language").value;
   const resultText = document.getElementById("resultText");
 
-  if (!text) {
-    resultText.innerHTML = `<span style="color:#e53935;">⚠️ กรุณาพิมพ์ข้อความ หรือเลือกไฟล์เสียง/เอกสารก่อนกดแปลภาษา</span>`;
+  if (!text || text.startsWith("⏳") || text.startsWith("❌")) {
+    resultText.innerHTML = `<span style="color:#e53935;">⚠️ กรุณาพิมพ์ข้อความ หรือรอให้ถอดเสียงเสร็จก่อนครับ</span>`;
     return;
   }
 
@@ -162,7 +166,7 @@ async function translateText() {
     const res = await fetch(`${PYTHON_SERVER_URL}/translate`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: json = JSON.stringify({ text: text, target: targetLang })
+      body: JSON.stringify({ text: text, target: targetLang })
     });
 
     if (!res.ok) throw new Error("ไม่สามารถเชื่อมต่อระบบแปลภาษาของเซิร์ฟเวอร์ได้");
@@ -171,10 +175,10 @@ async function translateText() {
 
     resultText.innerHTML = `
       <div style="font-size:15px; color:#222; line-height:1.8; white-space:pre-wrap; text-align:left;">${finalTranslation.trim()}</div>
-      <div style="text-align:left;">
+      <div style="text-align:left; margin-top:10px;">
         <button onclick="navigator.clipboard.writeText(this.dataset.t).then(()=>this.textContent='✅ คัดลอกแล้ว!')"
           data-t="${finalTranslation.trim().replace(/"/g,'&quot;')}"
-          style="margin-top:12px; padding:6px 14px; border:1px solid #ccc; border-radius:6px;
+          style="padding:6px 14px; border:1px solid #ccc; border-radius:6px;
           cursor:pointer; font-size:13px; background:#fff;">📋 คัดลอกคำแปล</button>
       </div>`;
 
@@ -188,10 +192,10 @@ function buildProgress(pct, msg) {
     <div style="text-align:center; padding:8px 0;">
       <div style="font-size:13px; color:#555; margin-bottom:8px;">⏳ ${msg}</div>
       <div style="background:#eee; border-radius:20px; height:10px; overflow:hidden; margin-bottom:4px;">
-        <div style="height:100%; width:${pct}%; background:linear-gradient(90deg,#4CAF50,#2196F3);\
+        <div style="height:100%; width:${pct}%; background:linear-gradient(90deg,#4CAF50,#2196F3);
              border-radius:20px; transition:width 0.5s ease;"></div>
       </div>
-      <div style="font-size:11px; color:#aaa;\">${pct}%</div>
+      <div style="font-size:11px; color:#aaa;">${pct}%</div>
     </div>`;
 }
 

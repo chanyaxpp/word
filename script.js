@@ -64,12 +64,14 @@ async function processFileSpeech() {
   const sourceLang = document.getElementById("sourceLang").value;
   const mode = document.querySelector('input[name="output_mode"]:checked').value;
   const targetLang = document.getElementById("targetLang").value;
+  const modelKey = document.getElementById("modelSelect").value;
 
   const formData = new FormData();
   formData.append("audio", file);
   formData.append("source_lang", sourceLang);
   formData.append("mode", mode);
   formData.append("target_lang", targetLang);
+  formData.append("model", modelKey);
 
   let chunkTexts = {};
   let allSegments = [];
