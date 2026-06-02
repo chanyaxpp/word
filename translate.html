@@ -1,62 +1,163 @@
 <!DOCTYPE html>
 <html lang="th">
-
 <head>
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Translate - ระบบแปลภาษาอัจฉริยะ</title>
+  <title>Translate - แปลภาษา</title>
   <link rel="stylesheet" href="style.css">
+  <!-- PDF.js for PDF reading -->
   <script src="https://cdnjs.cloudflare.com/ajax/libs/pdf.js/2.16.105/pdf.min.js"></script>
+  <!-- Tesseract.js for image OCR -->
   <script src="https://cdn.jsdelivr.net/npm/tesseract.js@5/dist/tesseract.min.js"></script>
-</head>
+  <!-- Mammoth.js for DOCX reading -->
+  <script src="https://cdn.jsdelivr.net/npm/mammoth@1.8.0/mammoth.browser.min.js"></script>
+  <!-- docx.js for DOCX export -->
+  <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+  <!-- jsPDF for PDF export -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <!-- Sarabun Thai font for jsPDF -->
+  <style>
+    /* ── Download buttons ── */
+    .download-bar {
+      display: flex;
+      gap: 8px;
+      margin-top: 10px;
+      flex-wrap: wrap;
+    }
+    .dl-btn {
+      display: inline-flex;
+      align-items: center;
+      gap: 6px;
+      padding: 8px 16px;
+      border: none;
+      border-radius: 10px;
+      font-size: 13px;
+      font-weight: bold;
+      cursor: pointer;
+      transition: opacity 0.2s, transform 0.1s;
+    }
+    .dl-btn:hover  { opacity: 0.85; }
+    .dl-btn:active { transform: scale(0.97); }
+    .dl-pdf  { background: #e53935; color: #fff; }
+    .dl-docx { background: #1565c0; color: #fff; }
 
+    /* ── Summary box ── */
+    .summary-box {
+      margin-top: 12px;
+      padding: 12px 14px;
+      background: linear-gradient(135deg, #e8f5e9, #f1f8e9);
+      border-left: 4px solid #43a047;
+      border-radius: 10px;
+      font-size: 13px;
+      line-height: 1.7;
+      color: #2e7d32;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+    .summary-title {
+      font-size: 12px;
+      font-weight: bold;
+      color: #388e3c;
+      margin-bottom: 6px;
+      display: flex;
+      align-items: center;
+      gap: 5px;
+    }
+    .summary-loading {
+      color: #aaa;
+      font-size: 13px;
+      animation: fadePulse 1.2s infinite alternate;
+    }
+    @keyframes fadePulse { from { opacity:0.4 } to { opacity:1 } }
+  </style>
+</head>
 <body>
   <div class="container">
     <button class="btn back-btn" onclick="goBack()">← ย้อนกลับ</button>
-
     <h1>🌍 แปลภาษา</h1>
 
-    <!-- ขั้นที่ 1 -->
-    <p class="section-label">📂 ขั้นที่ 1 — เลือกไฟล์หรือพิมพ์ข้อความ <span class="tip">(.txt, .pdf, รูปภาพ, เสียง, วิดีโอ)</span></p>
+    <div id="statusBadge" class="status-badge st-idle">
+      <span class="dot"></span>
+      <span id="statusText">พร้อมใช้งาน</span>
+    </div>
+
+    <!-- ตั้งค่า -->
+    <p class="section-label">⚙️ ตั้งค่า</p>
+    <div class="settings-box">
+      <div class="setting-row">
+        <label class="setting-label">🌐 ภาษาต้นฉบับ</label>
+        <select id="sourceLang" class="setting-select" onchange="autoSelectModel()">
+          <option value="auto">🔍 ตรวจจับอัตโนมัติ</option>
+          <option value="th">ภาษาไทย / อีสาน</option>
+          <option value="en">ภาษาอังกฤษ (English)</option>
+        </select>
+      </div>
+      <div class="setting-row">
+        <label class="setting-label">🌍 แปลเป็น</label>
+        <select id="targetLang" class="setting-select">
+          <option value="th">ภาษาไทย</option>
+          <option value="en">English</option>
+          <option value="zh">中文 (จีน)</option>
+          <option value="ko">한국어 (เกาหลี)</option>
+          <option value="ja">日本語 (ญี่ปุ่น)</option>
+        </select>
+      </div>
+      <input type="hidden" id="modelSelect" value="typhoon">
+      <div id="modelInfo" class="model-info-pill">🤖 โมเดล: Typhoon Isan (ไทย/อีสาน)</div>
+    </div>
+
+    <div class="divider"></div>
+
+    <!-- ไฟล์ -->
+    <p class="section-label">📂 เลือกไฟล์หรือพิมพ์ข้อความ
+      <span class="tip">(.txt · .pdf · .docx · รูปภาพ · เสียง · วิดีโอ)</span>
+    </p>
     <div class="file-box" onclick="document.getElementById('fileInput').click()">
-      <p>📁 คลิกเพื่อเลือกไฟล์เพื่อดึงข้อความ</p>
-      <p class="file-hint">รองรับเอกสาร, รูปภาพ, เสียง (.mp3, .wav) และวิดีโอ</p>
-      <input type="file" id="fileInput" accept=".txt,.pdf,.jpg,.jpeg,.png,.mp4,.mov,.mp3,.wav,.m4a,video/*,audio/*" style="display: none;">
+      <p>คลิกเพื่อเลือกไฟล์</p>
+      <p class="file-hint">.txt · .pdf · .docx · .jpg · .mp3 · .wav · .mp4 · .mov</p>
+      <input type="file" id="fileInput"
+        accept=".txt,.pdf,.docx,.doc,.jpg,.jpeg,.png,.mp4,.mov,.mp3,.wav,.m4a,video/*,audio/*"
+        style="display:none;">
       <div class="file-name" id="fileName">ยังไม่ได้เลือกไฟล์</div>
     </div>
 
     <p class="section-label" style="margin-top:14px;">✏️ ข้อความต้นฉบับ (แก้ไขได้)</p>
-    <textarea id="inputText" placeholder="พิมพ์ข้อความตรงนี้ หรือเลือกไฟล์เสียง/เอกสารด้านบนเพื่อดึงข้อความอัตโนมัติ..."></textarea>
-
-    <!-- ขั้นที่ 2 -->
-    <div class="divider"></div>
-    <p class="section-label">🌍 ขั้นที่ 2 — เลือกภาษาและกดแปล</p>
-
-    <select id="language">
-      <option value="th">แปลเป็น: ภาษาไทย (Thai)</option>
-      <option value="en">แปลเป็น: English (อังกฤษ)</option>
-      <option value="zh">แปลเป็น: 中文 (จีน)</option>
-      <option value="ko">แปลเป็น: 한국어 (เกาหลี)</option>
-      <option value="ja">แปลเป็น: 日本語 (ญี่ปุ่น)</option>
-    </select>
+    <textarea id="inputText" placeholder="พิมพ์ข้อความตรงนี้ หรือเลือกไฟล์เพื่อดึงข้อความอัตโนมัติ..."></textarea>
 
     <button class="btn confirm-btn" onclick="translateText()" style="margin-top:12px;">
       🚀 แปลภาษา
     </button>
-
-    <button class="btn stop-btn" onclick="resetTranslate()" style="margin-top:10px; background:#757575;">
-      🔄 รีเซ็ตหน้าจอ
+    <button class="btn" onclick="resetTranslate()" style="margin-top:10px; background:#9e9e9e;">
+      🔄 รีเซ็ต
     </button>
 
     <div class="divider"></div>
 
-    <p class="section-label">ผลลัพธ์การแปลภาษา</p>
-    <div class="result-box" id="resultText">
-      ผลลัพธ์จากการแปลภาษาจะแสดงตรงนี้...
+    <p class="section-label">ผลลัพธ์การแปล</p>
+    <div class="result-box" id="resultText">ผลลัพธ์จากการแปลภาษาจะแสดงตรงนี้...</div>
+
+    <!-- Summary -->
+    <div id="summarySection" style="display:none;">
+      <div class="summary-title">🧠 สรุปเนื้อหาอัตโนมัติ (AI)</div>
+      <div class="summary-box" id="summaryBox"></div>
+    </div>
+
+    <!-- Download bar -->
+    <div id="downloadBar" class="download-bar" style="display:none;">
+      <button class="dl-btn dl-pdf"  onclick="downloadResult('pdf')">⬇️ โหลด PDF</button>
+      <button class="dl-btn dl-docx" onclick="downloadResult('docx')">⬇️ โหลด DOCX</button>
     </div>
   </div>
 
   <script src="translate.js"></script>
-
+  <script>
+    function autoSelectModel() {
+      const lang  = document.getElementById("sourceLang").value;
+      const model = (lang === "en") ? "whisper_th" : "typhoon";
+      const label = (lang === "en") ? "Whisper TH (ไทย/อังกฤษ)" : "Typhoon Isan (ไทย/อีสาน)";
+      document.getElementById("modelSelect").value = model;
+      document.getElementById("modelInfo").textContent = "🤖 โมเดล: " + label;
+    }
+  </script>
 </body>
 </html>

@@ -1,5 +1,18 @@
+/* =========================================================
+   script.js — ถอดเสียง + สรุป AI + โหลด PDF/DOCX
+   ========================================================= */
 function goBack() { window.location.href = "index.html"; }
 
+const PYTHON_URL     = "http://127.0.0.1:5001";
+
+let recognition       = null;
+let currentEventSource = null;
+
+// ── state ──────────────────────────────────────────────────
+let _lastTranscribedText = "";
+let _lastSummaryText     = "";
+
+// ── status badge ──────────────────────────────────────────
 function setStatus(type, text) {
   const badge = document.getElementById("statusBadge");
   const span  = document.getElementById("statusText");
@@ -10,10 +23,30 @@ function setStatus(type, text) {
   if (dot) dot.className = (type === "listening" || type === "processing") ? "dot pulse" : "dot";
 }
 
-const PYTHON_URL = "http://127.0.0.1:5001";
-let recognition = null;
-let currentEventSource = null;
+// ── progress bar ──────────────────────────────────────────
+function buildProgressHTML(pct, msg, totalChunks, doneChunks) {
+  let chunkDots = "";
+  if (totalChunks > 1) {
+    const dotWidth = Math.max(8, Math.min(22, 200 / totalChunks));
+    const dots = Array.from({ length: totalChunks }, (_, i) => {
+      const done   = i < (doneChunks || 0);
+      const active = i === (doneChunks || 0);
+      const bg = done ? "#4CAF50" : active ? "#2196F3" : "#ddd";
+      return `<span class="chunk-dot" style="width:${dotWidth}px;background:${bg};"></span>`;
+    }).join("");
+    chunkDots = `<div class="chunk-dots">${dots}</div>`;
+  }
+  return `
+    <div class="progress-wrap">
+      <div class="progress-msg">⏳ ${msg}</div>
+      <div class="progress-track">
+        <div class="progress-bar" style="width:${pct}%;"></div>
+      </div>
+      ${chunkDots}
+    </div>`;
+}
 
+// ── DOMContentLoaded ──────────────────────────────────────
 window.addEventListener("DOMContentLoaded", () => {
   const input = document.getElementById("mediaFile");
   if (input) {
@@ -36,7 +69,7 @@ async function checkServer() {
     const res = await fetch(PYTHON_URL + "/ping", { signal: AbortSignal.timeout(3000) });
     const d   = await res.json();
     if (d.status === "ok") {
-      box.innerText = "✅ เชื่อมต่อ Python Server สำเร็จ — พร้อมถอดเสียง\nเลือกตั้งค่าภาษาแล้วกดเริ่มถอดเสียงได้เลยครับ";
+      box.innerText = "✅ เชื่อมต่อ Server สำเร็จ — พร้อมถอดเสียง";
       setStatus("idle", "พร้อมใช้งาน");
       return;
     }
@@ -45,59 +78,58 @@ async function checkServer() {
   setStatus("error", "ไม่พบ Python Server");
 }
 
+// ── ถอดเสียงจากไฟล์ ──────────────────────────────────────
 async function processFileSpeech() {
   const fileInput = document.getElementById("mediaFile");
-  const box = document.getElementById("speechResult");
+  const box       = document.getElementById("speechResult");
 
   if (!fileInput || !fileInput.files || fileInput.files.length === 0) {
     alert("กรุณาเลือกไฟล์เสียงหรือวิดีโอก่อนครับ");
     return;
   }
 
-  const file = fileInput.files[0];
-  const sizeMB = (file.size / 1024 / 1024).toFixed(1);
+  hideSummaryAndDownload();
+  _lastTranscribedText = "";
+  _lastSummaryText     = "";
+
+  const file       = fileInput.files[0];
+  const sizeMB     = (file.size / 1024 / 1024).toFixed(1);
+  const sourceLang = document.getElementById("sourceLang").value;
+  const mode       = document.querySelector('input[name="output_mode"]:checked').value;
+  const targetLang = mode === "translate" ? document.getElementById("targetLang").value : "";
+  const modelKey   = document.getElementById("modelSelect").value;
 
   setStatus("processing", "กำลังส่งไฟล์...");
-  box.innerHTML = buildProgressHTML(3, `กำลังส่งไฟล์ (${sizeMB} MB) ไปยังเซิร์ฟเวอร์...`);
-
-  // ดึงค่าการตั้งค่าจากหน้าเว็บ UI
-  const sourceLang = document.getElementById("sourceLang").value;
-  const mode = document.querySelector('input[name="output_mode"]:checked').value;
-  const targetLang = document.getElementById("targetLang").value;
-  const modelKey = document.getElementById("modelSelect").value;
+  box.innerHTML = buildProgressHTML(3, `กำลังส่งไฟล์ (${sizeMB} MB)...`);
 
   const formData = new FormData();
   formData.append("audio", file);
   formData.append("source_lang", sourceLang);
   formData.append("mode", mode);
-  formData.append("target_lang", targetLang);
+  if (targetLang) formData.append("target_lang", targetLang);
   formData.append("model", modelKey);
 
-  let chunkTexts = {};
-  let allSegments = [];
-  let totalChunks = 0;
+  let chunkTexts   = {};
+  let allSegments  = [];
+  let totalChunks  = 0;
 
   try {
     const response = await fetch(PYTHON_URL + "/transcribe-stream", {
-      method: "POST",
-      body: formData
+      method: "POST", body: formData
     });
-
     if (!response.ok) {
-      const errData = await response.json().catch(() => ({}));
-      throw new Error(errData.error || `Server error ${response.status}`);
+      const err = await response.json().catch(() => ({}));
+      throw new Error(err.error || `Server error ${response.status}`);
     }
 
-    const reader = response.body.getReader();
+    const reader  = response.body.getReader();
     const decoder = new TextDecoder();
-    let buffer = "";
-
+    let buffer    = "";
     setStatus("processing", "กำลังถอดเสียง...");
 
     while (true) {
       const { done, value } = await reader.read();
       if (done) break;
-
       buffer += decoder.decode(value, { stream: true });
       const lines = buffer.split("\n");
       buffer = lines.pop();
@@ -113,23 +145,26 @@ async function processFileSpeech() {
 
         } else if (evt.type === "segment") {
           allSegments.push(evt.seg);
-          box.innerHTML = buildProgressHTML(evt.pct,
-            `ประมวลผลส่วนที่ ${(evt.chunk_index||0)+1}/${totalChunks||'?'} — [${formatTime(evt.seg.end)}]`,
-            totalChunks, Object.keys(chunkTexts).length) +
-            buildLiveSegments(allSegments);
+          box.innerHTML = buildProgressHTML(
+            evt.pct,
+            `ถอดเสียงส่วนที่ ${(evt.chunk_index || 0) + 1}/${totalChunks || "?"}`,
+            totalChunks, Object.keys(chunkTexts).length
+          );
 
         } else if (evt.type === "chunk_done") {
           if (evt.total_chunks) totalChunks = evt.total_chunks;
           chunkTexts[evt.chunk_index] = evt.chunk_text;
-          const doneCount = Object.keys(chunkTexts).length;
-          const pct = evt.pct || Math.round((doneCount / totalChunks) * 90 + 8);
-          box.innerHTML =
-            buildProgressHTML(pct, `เสร็จส่วนที่ ${doneCount}/${totalChunks}`, totalChunks, doneCount) +
-            buildChunkSummary(chunkTexts, totalChunks);
+          const done = Object.keys(chunkTexts).length;
+          box.innerHTML = buildProgressHTML(evt.pct, `เสร็จ ${done}/${totalChunks} ส่วน`, totalChunks, done);
 
         } else if (evt.type === "done") {
-          setStatus("done", "สำเร็จแล้ว");
-          box.innerHTML = buildFinalResult(evt.text, evt.segments, evt.total_chunks, evt.language, mode);
+          setStatus("done", "เสร็จแล้ว");
+          _lastTranscribedText = evt.text;
+          box.innerHTML = buildFinalResult(evt.text, evt.segments, evt.language, mode);
+
+          // แสดง download bar + สรุป
+          showDownloadBar();
+          await summarizeWithClaude(evt.text, mode);
 
         } else if (evt.type === "error") {
           throw new Error(evt.msg);
@@ -138,102 +173,170 @@ async function processFileSpeech() {
     }
 
   } catch (error) {
-    console.error(error);
-    box.innerHTML = `<span style="color:#e53935;">❌ เกิดข้อผิดพลาด: ${error.message}<br><small>ลองตรวจสอบการทำงานของเซิร์ฟเวอร์หลังบ้าน</small></span>`;
+    box.innerHTML = `<span style="color:#e53935;">❌ ${error.message}</span>`;
     setStatus("error", "เกิดข้อผิดพลาด");
   }
 }
 
-function buildProgressHTML(pct, msg, totalChunks, doneChunks) {
-  let chunkBar = "";
-  if (totalChunks > 1) {
-    const dots = Array.from({ length: totalChunks }, (_, i) => {
-      const isDone = i < (doneChunks || 0);
-      const isActive = i === (doneChunks || 0);
-      const color = isDone ? "#4CAF50" : isActive ? "#2196F3" : "#e0e0e0";
-      return `<span style="display:inline-block;width:${Math.max(8, Math.min(20, 180/totalChunks))}px;
-        height:8px;border-radius:4px;background:${color};margin:1px;transition:background 0.3s;"></span>`;
-    }).join("");
-    chunkBar = `<div style="margin:6px 0 2px; text-align:center;">${dots}</div>
-      <div style="font-size:11px;color:#888;margin-bottom:4px;">ส่วนที่ ${doneChunks||0}/${totalChunks} เสร็จแล้ว</div>`;
-  }
-
-  return `
-    <div style="text-align:center; padding:10px 0;">
-      <div style="font-size:14px; color:#555; margin-bottom:8px;">⏳ ${msg}</div>
-      <div style="background:#eee; border-radius:20px; height:12px; overflow:hidden; margin-bottom:4px;">
-        <div style="height:100%; width:${pct}%; background:linear-gradient(90deg,#2196F3,#00bcd4);
-             border-radius:20px; transition:width 0.4s ease;"></div>
-      </div>
-      <div style="font-size:12px; color:#999;">${pct}%</div>
-      ${chunkBar}
-    </div>`;
-}
-
-function buildChunkSummary(chunkTexts, totalChunks) {
-  const keys = Object.keys(chunkTexts).sort((a,b) => a-b);
-  if (!keys.length) return "";
-  return `<div style="margin-top:8px; max-height:140px; overflow-y:auto; font-size:12px;
-    border-top:1px dashed #ddd; padding-top:8px;">` +
-    keys.map(k => `<p style="margin-bottom:5px; padding:4px 8px; background:#f0f7ff;
-      border-radius:6px;"><span style="color:#1976D2;font-weight:bold;">ส่วนที่ ${parseInt(k)+1}</span>
-      — ${chunkTexts[k] || '(ว่างเปล่า)'}</p>`).join("") +
-    `</div>`;
-}
-
-function buildLiveSegments(segs) {
-  const last5 = segs.slice(-5);
-  return `<div style="margin-top:8px; max-height:110px; overflow-y:auto; font-size:12px; color:#555;
-    border-top:1px dashed #ddd; padding-top:6px;">` +
-    last5.map(s => `<p style="margin-bottom:3px;">
-      <span style="color:#007bff;">[${formatTime(s.start)}-${formatTime(s.end)}]</span> ${s.text}</p>`).join("") +
-    `</div>`;
-}
-
-function buildFinalResult(text, segments, totalChunks, detectedLang, mode) {
-  const labelText = mode === "translate" ? "แปลภาษาเสร็จสิ้น" : "ถอดความรวม";
-  let html = `<div style="font-size:14px; color:#333; line-height:1.7; text-align:left;">`;
-  html += `<div style="font-size:11px;color:#666;margin-bottom:8px;">🌐 ภาษาต้นฉบับที่ระบบตรวจพบ: <b>${detectedLang.toUpperCase()}</b> | จำนวนส่วน: ${totalChunks}</div>`;
-  html += `<b>📝 ผลลัพธ์${labelText}:</b><br>
-    <p style="background:#f5f5f5; padding:10px; border-radius:8px; margin:8px 0 15px;
-    border-left:3px solid #2ecc71; white-space: pre-wrap;">${text}</p>`;
+// ── สร้าง HTML ผลลัพธ์สุดท้าย ─────────────────────────────
+function buildFinalResult(text, segments, detectedLang, mode) {
+  const label = mode === "translate" ? "แปลภาษาเสร็จสิ้น" : "ถอดความรวม";
+  let html = `<div style="font-size:12px;color:#888;margin-bottom:8px;">🌐 ภาษา: <b>${detectedLang.toUpperCase()}</b></div>`;
+  html += `<b>📝 ${label}:</b>
+    <p style="background:#f0f0f0;padding:10px;border-radius:8px;margin:8px 0 12px;
+    border-left:3px solid #2ecc71;white-space:pre-wrap;">${text}</p>`;
 
   if (segments && segments.length > 0) {
-    html += `<b>⏰ รายละเอียดแยกตามช่วงเวลา:</b><br>
-      <div style="max-height:180px; overflow-y:auto; border:1px solid #ddd; padding:8px;
-      border-radius:8px; background:#fafafa; margin-bottom:10px;">`;
+    html += `<b>⏰ รายละเอียดตามช่วงเวลา:</b>
+      <div style="max-height:180px;overflow-y:auto;border:1px solid #ddd;padding:8px;
+      border-radius:8px;background:#fafafa;margin-bottom:10px;">`;
     segments.forEach(seg => {
-      html += `<p style="margin-bottom:6px; font-size:13px;">
-        <span style="color:#007bff; font-weight:bold;">[${formatTime(seg.start)} - ${formatTime(seg.end)}]</span>
+      html += `<p style="margin-bottom:5px;font-size:13px;">
+        <span style="color:#007bff;font-weight:bold;">[${formatTime(seg.start)}-${formatTime(seg.end)}]</span>
         ${seg.text}</p>`;
     });
     html += `</div>`;
   }
 
   html += `<button onclick="navigator.clipboard.writeText(this.dataset.t).then(()=>this.textContent='✅ คัดลอกแล้ว!')"
-    data-t="${text.replace(/"/g, "&quot;")}"
-    style="padding:6px 14px; border:1px solid #ccc; border-radius:6px; cursor:pointer;
-    font-size:13px; background:#fff; margin-top:4px;">📋 คัดลอกข้อความผลลัพธ์</button>`;
-  html += `</div>`;
+    data-t="${text.replace(/"/g,"&quot;")}"
+    style="padding:6px 14px;border:1px solid #ccc;border-radius:6px;cursor:pointer;
+    font-size:13px;background:#fff;">📋 คัดลอก</button>`;
   return html;
 }
 
-function formatTime(seconds) {
-  const m = Math.floor(seconds / 60).toString().padStart(2, '0');
-  const s = Math.floor(seconds % 60).toString().padStart(2, '0');
-  return `${m}:${s}`;
+function formatTime(s) {
+  const m   = Math.floor(s / 60).toString().padStart(2, "0");
+  const sec = Math.floor(s % 60).toString().padStart(2, "0");
+  return `${m}:${sec}`;
 }
 
+// ── สรุปด้วย Claude API ────────────────────────────────────
+async function summarizeWithClaude(text, mode) {
+  const section = document.getElementById("summarySection");
+  const box     = document.getElementById("summaryBox");
+
+  section.style.display = "block";
+  box.innerHTML = `<span class="summary-loading">⏳ กำลังสรุปเนื้อหาด้วย AI...</span>`;
+
+  try {
+    const res = await fetch(`${PYTHON_URL}/summarize`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ text, target_lang: "th" })
+    });
+    const data = await res.json();
+    if (!res.ok || data.error) throw new Error(data.error || `Server error ${res.status}`);
+    _lastSummaryText = (data.summary || "").trim();
+    box.textContent  = _lastSummaryText;
+  } catch (err) {
+    box.innerHTML = `<span style="color:#e57373;">⚠️ สรุปไม่สำเร็จ: ${err.message}</span>`;
+  }
+}
+
+// ── show/hide helpers ─────────────────────────────────────
+function showDownloadBar() {
+  document.getElementById("downloadBar").style.display = "flex";
+}
+function hideSummaryAndDownload() {
+  document.getElementById("summarySection").style.display = "none";
+  document.getElementById("downloadBar").style.display    = "none";
+}
+
+// ── โหลดผลลัพธ์ ───────────────────────────────────────────
+async function downloadResult(format) {
+  if (!_lastTranscribedText) {
+    alert("กรุณาถอดเสียงก่อนโหลดไฟล์ครับ");
+    return;
+  }
+  if (format === "pdf") {
+    await exportToPDF(_lastTranscribedText, _lastSummaryText, "speech");
+  } else {
+    await exportToDOCX(_lastTranscribedText, _lastSummaryText, "speech");
+  }
+}
+
+// ── Export PDF ────────────────────────────────────────────
+async function exportToPDF(text, summary, mode) {
+  const { jsPDF } = window.jspdf;
+  const doc    = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+  const pageW  = doc.internal.pageSize.getWidth();
+  const margin = 15;
+  const maxW   = pageW - margin * 2;
+  let y        = 20;
+
+  const addSection = (title, body, titleColor, bodyColor) => {
+    if (y > 260) { doc.addPage(); y = 20; }
+    doc.setFontSize(13);
+    doc.setTextColor(...titleColor);
+    doc.text(title, margin, y);
+    y += 7;
+    doc.setFontSize(11);
+    doc.setTextColor(...bodyColor);
+    const lines = doc.splitTextToSize(body || "-", maxW);
+    for (const line of lines) {
+      if (y > 275) { doc.addPage(); y = 20; }
+      doc.text(line, margin, y);
+      y += 6;
+    }
+    y += 5;
+  };
+
+  doc.setFontSize(18);
+  doc.setTextColor(33, 150, 243);
+  doc.text("ผลลัพธ์การถอดเสียง", margin, y);
+  y += 12;
+
+  addSection("📝 ข้อความที่ถอดได้", text,    [80, 80, 80],   [50, 50, 50]);
+  if (summary) addSection("🧠 สรุปเนื้อหา (AI)", summary, [56, 142, 60], [46, 125, 50]);
+
+  doc.save(`potjana_speech_${Date.now()}.pdf`);
+}
+
+// ── Export DOCX ───────────────────────────────────────────
+async function exportToDOCX(text, summary, mode) {
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docx;
+
+  const wrapParagraphs = (t, style = {}) =>
+    (t || "-").split("\n").map(line =>
+      new Paragraph({ children: [new TextRun({ text: line, ...style })] })
+    );
+
+  const children = [
+    new Paragraph({ text: "ผลลัพธ์การถอดเสียง", heading: HeadingLevel.HEADING_1 }),
+    new Paragraph({ text: "" }),
+    new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("📝 ข้อความที่ถอดได้")] }),
+    ...wrapParagraphs(text, { color: "222222" }),
+    new Paragraph({ text: "" }),
+    ...(summary ? [
+      new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("🧠 สรุปเนื้อหา (AI)")] }),
+      ...wrapParagraphs(summary, { color: "2E7D32" }),
+    ] : []),
+  ];
+
+  const document = new Document({ sections: [{ children }] });
+  const blob     = await Packer.toBlob(document);
+  const url      = URL.createObjectURL(blob);
+  const anchor   = window.document.createElement("a");
+  anchor.href     = url;
+  anchor.download = `potjana_speech_${Date.now()}.docx`;
+  window.document.body.appendChild(anchor);
+  anchor.click();
+  setTimeout(() => { URL.revokeObjectURL(url); anchor.remove(); }, 1000);
+}
+
+// ── ไมค์สด ────────────────────────────────────────────────
 function startSpeech() {
   const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
   if (!SR) { alert("กรุณาใช้ Google Chrome ครับ"); return; }
   recognition = new SR();
-  recognition.lang = "th-TH";
-  recognition.continuous = true;
+  recognition.lang         = "th-TH";
+  recognition.continuous   = true;
   recognition.interimResults = true;
   const box = document.getElementById("speechResult");
-  box.innerHTML = '<span style="color:#aaa;">🎙️ กำลังฟัง... พูดได้เลยครับ</span>';
+  box.innerHTML = '<span style="color:#aaa;">🎙️ กำลังฟัง... พูดได้เลย</span>';
   setStatus("listening", "กำลังฟังเสียง...");
+  hideSummaryAndDownload();
   let finalText = "";
 
   recognition.onresult = function(e) {
@@ -242,18 +345,20 @@ function startSpeech() {
       const t = e.results[i][0].transcript;
       e.results[i].isFinal ? (finalText += t) : (interim += t);
     }
-    box.innerHTML =
-      '<div style="font-size:13px;color:#888;margin-bottom:8px;">🎙️ อัดเสียงสด (Web Speech API)</div>' +
+    box.innerHTML = '<div style="font-size:13px;color:#888;margin-bottom:6px;">🎙️ อัดเสียงสด</div>' +
       '<div style="font-size:16px;color:#222;line-height:1.6;">' + finalText +
-      '<span style="color:#aaa;">' + interim + '</span></div>';
+      '<span style="color:#aaa;">' + interim + "</span></div>";
+    _lastTranscribedText = finalText;
   };
   recognition.onerror = (e) => {
-    box.innerHTML = '<span style="color:#e53935;">❌ ข้อผิดพลาด: ' + e.error + '</span>';
+    box.innerHTML = '<span style="color:#e53935;">❌ ' + e.error + "</span>";
     setStatus("error", "เกิดข้อผิดพลาด");
   };
-  recognition.onend = () => {
-    if (document.getElementById("statusText").textContent === "กำลังฟังเสียง...") {
-      setStatus("done", "เสร็จสิ้น");
+  recognition.onend = async () => {
+    setStatus("done", "หยุดบันทึกแล้ว");
+    if (_lastTranscribedText) {
+      showDownloadBar();
+      await summarizeWithClaude(_lastTranscribedText, "original");
     }
   };
   recognition.start();
@@ -267,7 +372,10 @@ function resetSpeech() {
   if (recognition) recognition.stop();
   if (currentEventSource) { currentEventSource.close(); currentEventSource = null; }
   document.getElementById("speechResult").innerText = "ข้อความจากการแปลงเสียงจะแสดงที่นี่...";
-  document.getElementById("mediaName").innerText = "ยังไม่ได้เลือกไฟล์";
-  document.getElementById("mediaFile").value = "";
+  document.getElementById("mediaName").innerText    = "ยังไม่ได้เลือกไฟล์";
+  document.getElementById("mediaFile").value        = "";
+  hideSummaryAndDownload();
+  _lastTranscribedText = "";
+  _lastSummaryText     = "";
   setStatus("idle", "พร้อมใช้งาน");
 }
