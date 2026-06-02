@@ -295,7 +295,12 @@ async function exportToPDF(text, summary, mode) {
 
 // ── Export DOCX ───────────────────────────────────────────
 async function exportToDOCX(text, summary, mode) {
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docx;
+  const docxLib = window.docx;
+  if (!docxLib) {
+    alert("ไม่สามารถโหลด Library สำหรับสร้าง DOCX ได้ กรุณาตรวจสอบว่ามี Script CDN ในหน้า HTML หรือยัง");
+    return;
+  }
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docxLib;
 
   const wrapParagraphs = (t, style = {}) =>
     (t || "-").split("\n").map(line =>

@@ -337,7 +337,12 @@ async function exportToPDF(original, translated, summary, mode) {
 
 // ── Export DOCX ───────────────────────────────────────────
 async function exportToDOCX(original, translated, summary, mode) {
-  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docx;
+  const docxLib = window.docx;
+  if (!docxLib) {
+    alert("ไม่สามารถโหลด Library สำหรับสร้าง DOCX ได้ กรุณาตรวจสอบว่ามี Script CDN ในหน้า HTML หรือยัง");
+    return;
+  }
+  const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docxLib;
 
   const titleText = mode === "translate" ? "ผลลัพธ์การแปลภาษา" : "ผลลัพธ์การถอดเสียง";
 
