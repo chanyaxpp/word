@@ -6,9 +6,11 @@
   <title>Speech To Text</title>
   <link rel="stylesheet" href="style.css">
   <!-- docx.js for DOCX export -->
-  <script src="https://unpkg.com/docx@8.5.0/build/index.js"></script>
+  <script src="https://unpkg.com/docx@8.5.0/build/index.umd.js"></script>
   <!-- jsPDF for PDF export -->
-  <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+  <script src="libs/jspdf.min.js"></script>
+  <!-- html2canvas สำหรับ render ภาษาไทยใน PDF -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
   <style>
     /* ── Download buttons ── */
     .download-bar {
@@ -63,6 +65,13 @@
     }
     @keyframes fadePulse { from { opacity:0.4 } to { opacity:1 } }
   </style>
+  <script>
+    window.addEventListener("load", () => {
+      const found = Object.keys(window).filter(k => /doc|docx/i.test(k));
+      console.log("[DOCX DEBUG] window keys:", found);
+      console.log("[DOCX DEBUG] window.docx:", typeof window.docx, window.docx ? Object.keys(window.docx).slice(0,5) : "undefined");
+    });
+  </script>
 </head>
 <body>
   <div class="container">

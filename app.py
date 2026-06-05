@@ -211,70 +211,67 @@ def ping():
 
 @app.route("/summarize", methods=["POST"])
 def summarize_text():
-    """สรุปข้อความแบบ extractive (ไม่ใช้ AI API) แล้วแปลด้วย Google Translate"""
+    """สรุปข้อความด้วย Claude API (claude-haiku-4-5)"""
+    import urllib.request as _urllib_req
+
     data = request.get_json()
     if not data or "text" not in data:
         return jsonify({"error": "ต้องระบุ text"}), 400
 
-    text      = data["text"].strip()
-    target_lang = data.get("target_lang", "th")   # ภาษาที่จะแสดงสรุป
+    text        = data["text"].strip()
+    target_lang = data.get("target_lang", "th")
 
     if not text:
         return jsonify({"summary": ""}), 200
 
+    lang_label = {
+        "th": "ภาษาไทย", "en": "English", "zh": "ภาษาจีน (中文)",
+        "ko": "ภาษาเกาหลี (한국어)", "ja": "ภาษาญี่ปุ่น (日本語)",
+    }.get(target_lang, "ภาษาไทย")
+
+    prompt = (
+        f"คุณคือผู้ช่วย AI ที่เชี่ยวชาญการสรุปเนื้อหาภาษาไทย\n\n"
+        f"ต่อไปนี้คือข้อความที่ถอดจากเสียงหรือแปลมา:\n\n"
+        f"{text[:4000]}\n\n"
+        f"สรุปเนื้อหาข้างต้นเป็น{lang_label} ในรูปแบบย่อหน้าสั้น ๆ 3-5 ประโยค "
+        f"โดยบอกว่าบทความ/เสียงนี้พูดถึงอะไร ใจความสำคัญคืออะไร และข้อสรุปคืออะไร "
+        f"ห้ามใช้ bullet หรือเลขข้อ ให้เขียนเป็นร้อยแก้วต่อเนื่องที่อ่านเข้าใจได้ทันที "
+        f"ตอบเป็น{lang_label}เท่านั้น ไม่ต้องมีคำนำ"
+    )
+
+    api_key = os.environ.get("ANTHROPIC_API_KEY", "")
+    if not api_key:
+        # fallback: extractive 3 ประโยคแรกที่ยาวสุด
+        sentences = [s.strip() for s in re.split(r'\n+|(?<=[.!?])\s+', text) if len(s.strip()) > 15]
+        top = sorted(sentences, key=len, reverse=True)[:3]
+        return jsonify({"summary": "\n".join(f"{i+1}. {s}" for i, s in enumerate(top))})
+
     try:
-        # ── แยกประโยค (รองรับทั้งไทย / อังกฤษ) ──────────────────────
-        raw_sentences = re.split(r'(?<=[.!?।\n])\s+|(?<=[\u0e2f\u0e46])\s+|\n+', text)
-        sentences = [s.strip() for s in raw_sentences if len(s.strip()) > 10]
+        payload = json.dumps({
+            "model": "claude-haiku-4-5-20251001",
+            "max_tokens": 600,
+            "messages": [{"role": "user", "content": prompt}]
+        }).encode("utf-8")
 
-        if not sentences:
-            return jsonify({"summary": text[:300]}), 200
-
-        # ── scoring: ให้คะแนนประโยคตาม TF ของคำที่ปรากฏบ่อย ──────────
-        # tokenize อย่างง่าย (แยกตามช่องว่างและเครื่องหมาย)
-        stop_words = {
-            "ที่","ใน","และ","ของ","ใน","มี","เป็น","ได้","จาก","ให้","กับ",
-            "the","a","an","is","are","was","were","in","on","at","of","to",
-            "and","or","but","for","with","this","that","it","be","have","has"
-        }
-
-        word_freq: dict = {}
-        for sent in sentences:
-            for word in re.findall(r'\w+', sent.lower()):
-                if word not in stop_words and len(word) > 1:
-                    word_freq[word] = word_freq.get(word, 0) + 1
-
-        max_freq = max(word_freq.values(), default=1)
-        for w in word_freq:
-            word_freq[w] /= max_freq
-
-        def score_sentence(sent):
-            words = re.findall(r'\w+', sent.lower())
-            return sum(word_freq.get(w, 0) for w in words) / max(len(words), 1)
-
-        scored = sorted(
-            enumerate(sentences),
-            key=lambda x: score_sentence(x[1]),
-            reverse=True
+        req = _urllib_req.Request(
+            "https://api.anthropic.com/v1/messages",
+            data=payload,
+            headers={
+                "Content-Type": "application/json",
+                "x-api-key": api_key,
+                "anthropic-version": "2023-06-01",
+            },
+            method="POST",
         )
+        with _urllib_req.urlopen(req, timeout=30) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
 
-        # เลือก top-5 แล้วเรียงตามลำดับในต้นฉบับ
-        top_n   = min(5, len(scored))
-        indices = sorted([idx for idx, _ in scored[:top_n]])
-        key_sentences = [sentences[i] for i in indices]
-
-        # ── แปลแต่ละประโยคถ้าภาษาเป้าหมายไม่ใช่ภาษาเดิม ──────────────
-        summary_lines = []
-        for i, sent in enumerate(key_sentences, 1):
-            translated = google_translate(sent, target_lang)
-            summary_lines.append(f"{i}. {translated}")
-
-        summary = "\n".join(summary_lines)
+        summary = result["content"][0]["text"].strip()
         return jsonify({"summary": summary})
 
     except Exception as e:
         err = traceback.format_exc()
-        print(f"[ERROR /summarize]\n{err}")
+        print(f"[ERROR /summarize Claude]\n{err}")
         return jsonify({"error": str(e)}), 500
 
 

@@ -23,8 +23,9 @@ function setStatus(type, text) {
   if (dot) dot.className = (type === "listening" || type === "processing") ? "dot pulse" : "dot";
 }
 
-// ── progress bar ──────────────────────────────────────────
 function buildProgressHTML(pct, msg, totalChunks, doneChunks) {
+  const safePct = Math.min(100, Math.max(0, Math.round(pct)));
+
   let chunkDots = "";
   if (totalChunks > 1) {
     const dotWidth = Math.max(8, Math.min(22, 200 / totalChunks));
@@ -36,12 +37,11 @@ function buildProgressHTML(pct, msg, totalChunks, doneChunks) {
     }).join("");
     chunkDots = `<div class="chunk-dots">${dots}</div>`;
   }
+
   return `
     <div class="progress-wrap">
       <div class="progress-msg">⏳ ${msg}</div>
-      <div class="progress-track">
-        <div class="progress-bar" style="width:${pct}%;"></div>
-      </div>
+      <div style="font-size:28px; font-weight:bold; color:#2196F3; text-align:center; margin:8px 0;">${safePct}%</div>
       ${chunkDots}
     </div>`;
 }
@@ -256,48 +256,82 @@ async function downloadResult(format) {
   }
 }
 
-// ── Export PDF ────────────────────────────────────────────
+// ── Export PDF (html2canvas — รองรับภาษาไทย) ─────────────
 async function exportToPDF(text, summary, mode) {
-  const { jsPDF } = window.jspdf;
-  const doc    = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
-  const pageW  = doc.internal.pageSize.getWidth();
-  const margin = 15;
-  const maxW   = pageW - margin * 2;
-  let y        = 20;
+  // สร้าง div ชั่วคราวสำหรับ render
+  const wrapper = document.createElement("div");
+  wrapper.style.cssText = `
+    position: fixed; left: -9999px; top: 0;
+    width: 794px; padding: 48px 56px;
+    background: #fff; font-family: 'Sarabun', 'Segoe UI', sans-serif;
+    font-size: 15px; line-height: 1.8; color: #222; box-sizing: border-box;
+  `;
 
-  const addSection = (title, body, titleColor, bodyColor) => {
-    if (y > 260) { doc.addPage(); y = 20; }
-    doc.setFontSize(13);
-    doc.setTextColor(...titleColor);
-    doc.text(title, margin, y);
-    y += 7;
-    doc.setFontSize(11);
-    doc.setTextColor(...bodyColor);
-    const lines = doc.splitTextToSize(body || "-", maxW);
-    for (const line of lines) {
-      if (y > 275) { doc.addPage(); y = 20; }
-      doc.text(line, margin, y);
-      y += 6;
+  const esc = s => (s || "-").replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/\n/g,"<br>");
+
+  wrapper.innerHTML = `
+    <link href="https://fonts.googleapis.com/css2?family=Sarabun:wght@400;700&display=swap" rel="stylesheet">
+    <h1 style="font-size:22px;color:#2196F3;margin:0 0 24px;border-bottom:2px solid #e3f2fd;padding-bottom:12px;">
+      📝 ผลลัพธ์การถอดเสียง
+    </h1>
+    <h2 style="font-size:15px;color:#1565c0;margin:0 0 8px;">📝 ข้อความที่ถอดได้</h2>
+    <div style="background:#f5f5f5;padding:14px 16px;border-radius:8px;border-left:4px solid #2196F3;margin-bottom:24px;white-space:pre-wrap;word-break:break-word;">${esc(text)}</div>
+    ${summary ? `
+    <h2 style="font-size:15px;color:#388e3c;margin:0 0 8px;">🧠 สรุปเนื้อหา (AI)</h2>
+    <div style="background:#f1f8e9;padding:14px 16px;border-radius:8px;border-left:4px solid #43a047;color:#2e7d32;white-space:pre-wrap;word-break:break-word;">${esc(summary)}</div>
+    ` : ""}
+  `;
+  document.body.appendChild(wrapper);
+
+  // รอฟอนต์โหลด
+  await document.fonts.ready;
+  await new Promise(r => setTimeout(r, 300));
+
+  try {
+    const canvas = await html2canvas(wrapper, { scale: 2, useCORS: true, backgroundColor: "#fff" });
+    const { jsPDF } = window.jspdf;
+    const pdf    = new jsPDF({ unit: "mm", format: "a4", orientation: "portrait" });
+    const pageW  = pdf.internal.pageSize.getWidth();
+    const pageH  = pdf.internal.pageSize.getHeight();
+    const margin = 10;
+    const imgW   = pageW - margin * 2;
+    const imgH   = (canvas.height * imgW) / canvas.width;
+    const imgData = canvas.toDataURL("image/jpeg", 0.95);
+
+    let y = margin;
+    let remaining = imgH;
+    let srcY = 0;
+    while (remaining > 0) {
+      const sliceH = Math.min(remaining, pageH - margin * 2);
+      const sliceCanvas = document.createElement("canvas");
+      sliceCanvas.width  = canvas.width;
+      sliceCanvas.height = (sliceH / imgW) * canvas.width;
+      const ctx = sliceCanvas.getContext("2d");
+      ctx.drawImage(canvas, 0, srcY * (canvas.width / imgW), canvas.width, sliceCanvas.height, 0, 0, canvas.width, sliceCanvas.height);
+      pdf.addImage(sliceCanvas.toDataURL("image/jpeg", 0.95), "JPEG", margin, y, imgW, sliceH);
+      remaining -= sliceH;
+      srcY += sliceH;
+      if (remaining > 0) { pdf.addPage(); y = margin; }
     }
-    y += 5;
-  };
 
-  doc.setFontSize(18);
-  doc.setTextColor(33, 150, 243);
-  doc.text("ผลลัพธ์การถอดเสียง", margin, y);
-  y += 12;
-
-  addSection("📝 ข้อความที่ถอดได้", text,    [80, 80, 80],   [50, 50, 50]);
-  if (summary) addSection("🧠 สรุปเนื้อหา (AI)", summary, [56, 142, 60], [46, 125, 50]);
-
-  doc.save(`potjana_speech_${Date.now()}.pdf`);
+    pdf.save(`potjana_speech_${Date.now()}.pdf`);
+  } finally {
+    document.body.removeChild(wrapper);
+  }
 }
 
 // ── Export DOCX ───────────────────────────────────────────
 async function exportToDOCX(text, summary, mode) {
-  const docxLib = window.docx;
-  if (!docxLib) {
-    alert("ไม่สามารถโหลด Library สำหรับสร้าง DOCX ได้ กรุณาตรวจสอบว่ามี Script CDN ในหน้า HTML หรือยัง");
+  // docx@8 expose ตัวเองใน window ชื่อต่าง ๆ — ลองทุกแบบ
+  const docxLib = window.docx
+    || window.DocxJS
+    || window.DOCX
+    || (typeof docx !== "undefined" ? docx : null)
+    || (typeof DocxJS !== "undefined" ? DocxJS : null);
+  if (!docxLib || !docxLib.Document) {
+    // แสดง keys ที่มีใน window เพื่อ debug
+    const keys = Object.keys(window).filter(k => /doc/i.test(k));
+    alert("โหลด DOCX library ไม่สำเร็จ\nGlobal keys ที่พบ: " + (keys.join(", ") || "ไม่พบ") + "\nกรุณาส่ง screenshot นี้ให้ผู้พัฒนา");
     return;
   }
   const { Document, Packer, Paragraph, TextRun, HeadingLevel } = docxLib;
@@ -307,11 +341,12 @@ async function exportToDOCX(text, summary, mode) {
       new Paragraph({ children: [new TextRun({ text: line, ...style })] })
     );
 
+  // แสดงเฉพาะผลลัพธ์สุดท้าย (ถอดความ + สรุป)
   const children = [
     new Paragraph({ text: "ผลลัพธ์การถอดเสียง", heading: HeadingLevel.HEADING_1 }),
     new Paragraph({ text: "" }),
     new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("📝 ข้อความที่ถอดได้")] }),
-    ...wrapParagraphs(text, { color: "222222" }),
+    ...wrapParagraphs(text, { bold: true }),
     new Paragraph({ text: "" }),
     ...(summary ? [
       new Paragraph({ heading: HeadingLevel.HEADING_2, children: [new TextRun("🧠 สรุปเนื้อหา (AI)")] }),
