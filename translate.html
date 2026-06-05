@@ -121,14 +121,14 @@
     <p class="section-label">📂 เลือกไฟล์หรือพิมพ์ข้อความ
       <span class="tip">(.txt · .pdf · .docx · รูปภาพ · เสียง · วิดีโอ)</span>
     </p>
-    <div class="file-box" onclick="document.getElementById('fileInput').click()">
+    <input type="file" id="fileInput"
+      accept=".txt,.pdf,.docx,.doc,.jpg,.jpeg,.png,.mp4,.mov,.mp3,.wav,.m4a,video/*,audio/*"
+      style="display:none;">
+    <label for="fileInput" class="file-box" style="display:block;cursor:pointer;">
       <p>คลิกเพื่อเลือกไฟล์</p>
       <p class="file-hint">.txt · .pdf · .docx · .jpg · .mp3 · .wav · .mp4 · .mov</p>
-      <input type="file" id="fileInput"
-        accept=".txt,.pdf,.docx,.doc,.jpg,.jpeg,.png,.mp4,.mov,.mp3,.wav,.m4a,video/*,audio/*"
-        style="display:none;">
       <div class="file-name" id="fileName">ยังไม่ได้เลือกไฟล์</div>
-    </div>
+    </label>
 
     <p class="section-label" style="margin-top:14px;">✏️ ข้อความต้นฉบับ (แก้ไขได้)</p>
     <textarea id="inputText" placeholder="พิมพ์ข้อความตรงนี้ หรือเลือกไฟล์เพื่อดึงข้อความอัตโนมัติ..."></textarea>
@@ -142,12 +142,19 @@
 
     <div class="divider"></div>
 
-    <p class="section-label">ผลลัพธ์การแปล</p>
+    <!-- ช่องถอดข้อความ (แสดงเฉพาะตอนถอดจากไฟล์เสียง/วิดีโอ) -->
+    <div id="transcribedSection" style="display:none;">
+      <p class="section-label">📝 ข้อความที่ถอดได้</p>
+      <div class="result-box" id="transcribedText"></div>
+    </div>
+
+    <!-- ช่องแปล -->
+    <p class="section-label">🌍 ผลลัพธ์การแปล</p>
     <div class="result-box" id="resultText">ผลลัพธ์จากการแปลภาษาจะแสดงตรงนี้...</div>
 
-    <!-- Summary -->
+    <!-- ช่องสรุป -->
     <div id="summarySection" style="display:none;">
-      <div class="summary-title">🧠 สรุปเนื้อหาอัตโนมัติ (AI)</div>
+      <p class="section-label">🧠 สรุปเนื้อหาอัตโนมัติ (AI)</p>
       <div class="summary-box" id="summaryBox"></div>
     </div>
 

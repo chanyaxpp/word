@@ -179,15 +179,25 @@ async function processFileSpeech() {
 }
 
 // ── สร้าง HTML ผลลัพธ์สุดท้าย ─────────────────────────────
+// ── helper ปุ่มคัดลอก ─────────────────────────────────────
+function copyBtn(text) {
+  const safe = text.replace(/\\/g,"\\\\").replace(/`/g,"\\`");
+  return `<button onclick="navigator.clipboard.writeText(\`${safe}\`).then(()=>{this.textContent='✅ คัดลอกแล้ว!';setTimeout(()=>this.textContent='📋 คัดลอก',2000)})"
+    style="margin-top:8px;padding:5px 12px;border:1px solid #ccc;border-radius:6px;
+    cursor:pointer;font-size:12px;background:#fff;color:#555;">📋 คัดลอก</button>`;
+}
+
+// ── สร้าง HTML ผลลัพธ์สุดท้าย ─────────────────────────────
 function buildFinalResult(text, segments, detectedLang, mode) {
   const label = mode === "translate" ? "แปลภาษาเสร็จสิ้น" : "ถอดความรวม";
   let html = `<div style="font-size:12px;color:#888;margin-bottom:8px;">🌐 ภาษา: <b>${detectedLang.toUpperCase()}</b></div>`;
   html += `<b>📝 ${label}:</b>
-    <p style="background:#f0f0f0;padding:10px;border-radius:8px;margin:8px 0 12px;
-    border-left:3px solid #2ecc71;white-space:pre-wrap;">${text}</p>`;
+    <div style="background:#f0f0f0;padding:10px;border-radius:8px;margin:8px 0 4px;
+    border-left:3px solid #2ecc71;white-space:pre-wrap;">${text}</div>
+    ${copyBtn(text)}`;
 
   if (segments && segments.length > 0) {
-    html += `<b>⏰ รายละเอียดตามช่วงเวลา:</b>
+    html += `<b style="display:block;margin-top:12px;">⏰ รายละเอียดตามช่วงเวลา:</b>
       <div style="max-height:180px;overflow-y:auto;border:1px solid #ddd;padding:8px;
       border-radius:8px;background:#fafafa;margin-bottom:10px;">`;
     segments.forEach(seg => {
@@ -198,10 +208,15 @@ function buildFinalResult(text, segments, detectedLang, mode) {
     html += `</div>`;
   }
 
-  html += `<button onclick="navigator.clipboard.writeText(this.dataset.t).then(()=>this.textContent='✅ คัดลอกแล้ว!')"
-    data-t="${text.replace(/"/g,"&quot;")}"
-    style="padding:6px 14px;border:1px solid #ccc;border-radius:6px;cursor:pointer;
-    font-size:13px;background:#fff;">📋 คัดลอก</button>`;
+  html += `
+    <div style="font-size:12px;font-weight:bold;color:#388e3c;margin:14px 0 4px;display:flex;align-items:center;gap:5px;">
+      🧠 สรุปเนื้อหาอัตโนมัติ (AI)
+    </div>
+    <div id="inlineSummaryBox" style="padding:12px 14px;background:linear-gradient(135deg,#e8f5e9,#f1f8e9);
+      border-left:4px solid #43a047;border-radius:10px;font-size:13px;line-height:1.7;color:#2e7d32;
+      white-space:pre-wrap;word-break:break-word;">
+      <span style="color:#aaa;">⏳ กำลังสรุปเนื้อหาด้วย AI...</span>
+    </div>`;
   return html;
 }
 
@@ -213,11 +228,17 @@ function formatTime(s) {
 
 // ── สรุปด้วย Claude API ────────────────────────────────────
 async function summarizeWithClaude(text, mode) {
-  const section = document.getElementById("summarySection");
-  const box     = document.getElementById("summaryBox");
+  // เขียนลง inlineSummaryBox (อยู่ใน buildFinalResult) ถ้ามี
+  // ถ้าไม่มี (กรณีไมค์สด) ให้ใช้ summarySection เดิม
+  const inlineBox = document.getElementById("inlineSummaryBox");
+  const section   = document.getElementById("summarySection");
+  const box       = document.getElementById("summaryBox");
 
-  section.style.display = "block";
-  box.innerHTML = `<span class="summary-loading">⏳ กำลังสรุปเนื้อหาด้วย AI...</span>`;
+  if (!inlineBox) {
+    // กรณีไมค์สด — ใช้ summarySection
+    section.style.display = "block";
+    box.innerHTML = `<span class="summary-loading">⏳ กำลังสรุปเนื้อหาด้วย AI...</span>`;
+  }
 
   try {
     const res = await fetch(`${PYTHON_URL}/summarize`, {
@@ -228,9 +249,19 @@ async function summarizeWithClaude(text, mode) {
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || `Server error ${res.status}`);
     _lastSummaryText = (data.summary || "").trim();
-    box.textContent  = _lastSummaryText;
+
+    if (inlineBox) {
+      inlineBox.innerHTML = _lastSummaryText.replace(/\n/g,"<br>") + copyBtn(_lastSummaryText);
+    } else {
+      box.innerHTML = _lastSummaryText.replace(/\n/g,"<br>") + copyBtn(_lastSummaryText);
+    }
   } catch (err) {
-    box.innerHTML = `<span style="color:#e57373;">⚠️ สรุปไม่สำเร็จ: ${err.message}</span>`;
+    const errHTML = `<span style="color:#e57373;">⚠️ สรุปไม่สำเร็จ: ${err.message}</span>`;
+    if (inlineBox) {
+      inlineBox.innerHTML = errHTML;
+    } else {
+      box.innerHTML = errHTML;
+    }
   }
 }
 
@@ -397,6 +428,19 @@ function startSpeech() {
   recognition.onend = async () => {
     setStatus("done", "หยุดบันทึกแล้ว");
     if (_lastTranscribedText) {
+      // แสดงข้อความพร้อมปุ่มคัดลอก + placeholder สรุป
+      box.innerHTML = `
+        <div style="font-size:13px;color:#888;margin-bottom:6px;">🎙️ อัดเสียงสด</div>
+        <div style="font-size:16px;color:#222;line-height:1.6;white-space:pre-wrap;">${_lastTranscribedText}</div>
+        ${copyBtn(_lastTranscribedText)}
+        <div style="font-size:12px;font-weight:bold;color:#388e3c;margin:14px 0 4px;display:flex;align-items:center;gap:5px;">
+          🧠 สรุปเนื้อหาอัตโนมัติ (AI)
+        </div>
+        <div id="inlineSummaryBox" style="padding:12px 14px;background:linear-gradient(135deg,#e8f5e9,#f1f8e9);
+          border-left:4px solid #43a047;border-radius:10px;font-size:13px;line-height:1.7;color:#2e7d32;
+          white-space:pre-wrap;word-break:break-word;">
+          <span style="color:#aaa;">⏳ กำลังสรุปเนื้อหาด้วย AI...</span>
+        </div>`;
       showDownloadBar();
       await summarizeWithClaude(_lastTranscribedText, "original");
     }

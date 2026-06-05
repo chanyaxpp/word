@@ -241,10 +241,16 @@ def summarize_text():
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        # fallback: extractive 3 ประโยคแรกที่ยาวสุด
-        sentences = [s.strip() for s in re.split(r'\n+|(?<=[.!?])\s+', text) if len(s.strip()) > 15]
-        top = sorted(sentences, key=len, reverse=True)[:3]
-        return jsonify({"summary": "\n".join(f"{i+1}. {s}" for i, s in enumerate(top))})
+        # fallback: สรุปแบบง่าย — เอาประโยคที่กระจายทั่วเนื้อหา (ต้น กลาง ท้าย)
+        sentences = [s.strip() for s in re.split(r'[.!?\n]+', text) if len(s.strip()) > 20]
+        n = len(sentences)
+        if n == 0:
+            return jsonify({"summary": text[:200]})
+        picks = []
+        if n >= 1: picks.append(sentences[0])
+        if n >= 3: picks.append(sentences[n // 2])
+        if n >= 2: picks.append(sentences[-1])
+        return jsonify({"summary": " ".join(picks)})
 
     try:
         payload = json.dumps({

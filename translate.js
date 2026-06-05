@@ -186,7 +186,7 @@ async function transcribeAndTranslate(file) {
           textarea.value = evt.text;
           setStatus("processing", "กำลังแปลภาษา...");
           resultBox.innerHTML = buildProgressHTML(95, "ถอดเสียงเสร็จ กำลังแปล...");
-          await doTranslate(evt.text, targetLang);
+          await doTranslate(evt.text, targetLang, evt.text, true); // true = มาจากไฟล์เสียง ให้แสดงช่องถอดเสมอ
         } else if (evt.type === "error") {
           throw new Error(evt.msg);
         }
@@ -198,9 +198,28 @@ async function transcribeAndTranslate(file) {
   }
 }
 
+// ── helper ปุ่มคัดลอก ─────────────────────────────────────
+function copyBtn(text) {
+  const safe = text.replace(/\\/g,"\\\\").replace(/`/g,"\\`");
+  return `<button onclick="navigator.clipboard.writeText(\`${safe}\`).then(()=>{this.textContent='✅ คัดลอกแล้ว!';setTimeout(()=>this.textContent='📋 คัดลอก',2000)})"
+    style="margin-top:8px;padding:5px 12px;border:1px solid #ccc;border-radius:6px;
+    cursor:pointer;font-size:12px;background:#fff;color:#555;">📋 คัดลอก</button>`;
+}
+
 // ── แปลด้วย Python server ──────────────────────────────────
-async function doTranslate(text, targetLang) {
+async function doTranslate(text, targetLang, transcribedText, forceShowTranscribed) {
   const resultBox = document.getElementById("resultText");
+
+  // แสดงช่องถอดข้อความถ้ามาจากไฟล์เสียง (forceShowTranscribed=true)
+  const transcribedSection = document.getElementById("transcribedSection");
+  const transcribedBox     = document.getElementById("transcribedText");
+  if (forceShowTranscribed && transcribedText) {
+    transcribedSection.style.display = "block";
+    transcribedBox.innerHTML = `<div style="white-space:pre-wrap;word-break:break-word;">${transcribedText}</div>${copyBtn(transcribedText)}`;
+  } else {
+    transcribedSection.style.display = "none";
+  }
+
   try {
     const res = await fetch(`${PYTHON_SERVER_URL}/translate`, {
       method: "POST",
@@ -214,18 +233,20 @@ async function doTranslate(text, targetLang) {
     _lastOriginalText   = text;
     _lastTranslatedText = translated;
 
+    // แสดงคำแปล + placeholder สรุปในกล่องเดียวกัน
     resultBox.innerHTML = `
       <div style="font-size:15px;color:#222;line-height:1.8;white-space:pre-wrap;">${translated}</div>
-      <div style="margin-top:10px;">
-        <button onclick="navigator.clipboard.writeText(this.dataset.t).then(()=>this.textContent='✅ คัดลอกแล้ว!')"
-          data-t="${translated.replace(/"/g,"&quot;")}"
-          style="padding:6px 14px;border:1px solid #ccc;border-radius:6px;cursor:pointer;font-size:13px;background:#fff;">
-          📋 คัดลอกคำแปล
-        </button>
+      ${copyBtn(translated)}
+      <div style="font-size:12px;font-weight:bold;color:#388e3c;margin:14px 0 4px;display:flex;align-items:center;gap:5px;">
+        🧠 สรุปเนื้อหาอัตโนมัติ (AI)
+      </div>
+      <div id="inlineSummaryBox" style="padding:12px 14px;background:linear-gradient(135deg,#e8f5e9,#f1f8e9);
+        border-left:4px solid #43a047;border-radius:10px;font-size:13px;line-height:1.7;color:#2e7d32;
+        white-space:pre-wrap;word-break:break-word;">
+        <span style="color:#aaa;">⏳ กำลังสรุปเนื้อหาด้วย AI...</span>
       </div>`;
     setStatus("done", "แปลภาษาเสร็จแล้ว");
 
-    // แสดง download bar ก่อน แล้วค่อย summarize
     showDownloadBar();
     await summarizeWithClaude(text, translated, targetLang);
 
@@ -253,12 +274,7 @@ async function translateText() {
 
 // ── สรุปด้วย Claude API ────────────────────────────────────
 async function summarizeWithClaude(original, translated, targetLangCode) {
-  const section   = document.getElementById("summarySection");
-  const box       = document.getElementById("summaryBox");
-  const langLabel = { th: "ภาษาไทย", en: "English", zh: "中文", ko: "한국어", ja: "日本語" }[targetLangCode] || targetLangCode;
-
-  section.style.display = "block";
-  box.innerHTML = `<span class="summary-loading">⏳ กำลังสรุปเนื้อหาด้วย AI...</span>`;
+  const inlineBox = document.getElementById("inlineSummaryBox");
 
   try {
     const res = await fetch(`${PYTHON_SERVER_URL}/summarize`, {
@@ -268,11 +284,10 @@ async function summarizeWithClaude(original, translated, targetLangCode) {
     });
     const data = await res.json();
     if (!res.ok || data.error) throw new Error(data.error || `Server error ${res.status}`);
-    const summary = data.summary || "";
-    _lastSummaryText = summary.trim();
-    box.textContent  = _lastSummaryText;
+    _lastSummaryText = (data.summary || "").trim();
+    if (inlineBox) inlineBox.innerHTML = _lastSummaryText.replace(/\n/g,"<br>") + copyBtn(_lastSummaryText);
   } catch (err) {
-    box.innerHTML = `<span style="color:#e57373;">⚠️ สรุปไม่สำเร็จ: ${err.message}</span>`;
+    if (inlineBox) inlineBox.innerHTML = `<span style="color:#e57373;">⚠️ สรุปไม่สำเร็จ: ${err.message}</span>`;
   }
 }
 
@@ -281,6 +296,8 @@ function showDownloadBar() {
   document.getElementById("downloadBar").style.display = "flex";
 }
 function hideSummaryAndDownload() {
+  const ts = document.getElementById("transcribedSection");
+  if (ts) ts.style.display = "none";
   document.getElementById("summarySection").style.display  = "none";
   document.getElementById("downloadBar").style.display = "none";
   _lastOriginalText   = "";
