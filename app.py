@@ -11,14 +11,21 @@ import gc
 import traceback
 
 app = Flask(__name__)
-CORS(app)
+CORS(app, origins="*", supports_credentials=False)
 
 @app.route("/")
 def index():
     return send_from_directory("/app", "index.html")
 
-@app.route("/<path:filename>")
+STATIC_EXTENSIONS = {'.html', '.js', '.css', '.ico', '.png', '.jpg', '.svg', '.woff', '.woff2', '.ttf', '.map'}
+
+@app.route("/<path:filename>", methods=["GET"])
 def static_files(filename):
+    # ให้บริการเฉพาะ static files — ไม่ intercept API routes (POST)
+    ext = os.path.splitext(filename)[1].lower()
+    if ext not in STATIC_EXTENSIONS:
+        from flask import abort
+        abort(404)
     return send_from_directory("/app", filename)
 
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
@@ -434,4 +441,12 @@ def transcribe_stream():
 
 if __name__ == "__main__":
     debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
+    # โหลดโมเดล default (typhoon) ก่อน Flask รับ request
+    # ป้องกัน timeout / 500 error ตอน request แรกเข้ามาระหว่างที่โมเดลกำลังโหลด
+    if not debug_mode or os.environ.get("WERKZEUG_RUN_MAIN") == "true":
+        print("🔄 Preloading default model (typhoon)...")
+        try:
+            get_pipeline("typhoon")
+        except Exception as e:
+            print(f"⚠️ Preload failed (จะลองโหลดใหม่ตอน request แรก): {e}")
     app.run(host="0.0.0.0", port=5001, debug=debug_mode, threaded=True, use_reloader=debug_mode)

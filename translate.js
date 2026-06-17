@@ -7,7 +7,10 @@ if (typeof pdfjsLib !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = "libs/pdf.worker.min.js";
 }
 
-const PYTHON_SERVER_URL = "http://192.168.55.53:5001";
+// ใช้ path สัมพัทธ์ — Flask serve หน้าเว็บเองอยู่แล้ว (ดู app.py route "/")
+// ทำให้ใช้งานได้ทันทีไม่ว่าจะเปิดผ่าน localhost, 127.0.0.1 หรือ IP เครื่องจริง
+// (ไม่ต้องแก้ IP เองอีกต่อไป — ปัญหาเดิมคือ IP เครื่องเปลี่ยนไปแล้วแต่โค้ด hardcode ไว้)
+const PYTHON_SERVER_URL = "";
 
 // ── state ──────────────────────────────────────────────────
 let _lastOriginalText   = "";   // ต้นฉบับล่าสุด (ใช้ใน download)

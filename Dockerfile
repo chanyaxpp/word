@@ -11,8 +11,8 @@ COPY requirements.txt .
 
 RUN pip install --no-cache-dir -r requirements.txt
 
-# ไม่ COPY . . เพราะจะใช้ volume mount แทน
-# ทำให้แก้ไขโค้ดได้โดยไม่ต้อง build ใหม่
+# COPY source code เข้า container (volume mount จะ override ตอน dev ได้เช่นกัน)
+COPY . .
 
 EXPOSE 5001
 

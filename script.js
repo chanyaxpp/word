@@ -3,7 +3,10 @@
    ========================================================= */
 function goBack() { window.location.href = "index.html"; }
 
-const PYTHON_URL     = "http://192.168.55.53:5001";
+// ใช้ path สัมพัทธ์ — Flask serve หน้าเว็บเองอยู่แล้ว (ดู app.py route "/")
+// ทำให้ใช้งานได้ทันทีไม่ว่าจะเปิดผ่าน localhost, 127.0.0.1 หรือ IP เครื่องจริง
+// (ไม่ต้องแก้ IP เองอีกต่อไป — ปัญหาเดิมคือ IP เครื่องเปลี่ยนไปแล้วแต่โค้ด hardcode ไว้)
+const PYTHON_URL     = "";
 
 let recognition       = null;
 let currentEventSource = null;
@@ -65,16 +68,22 @@ window.addEventListener("DOMContentLoaded", () => {
 
 async function checkServer() {
   const box = document.getElementById("speechResult");
-  try {
-    const res = await fetch(PYTHON_URL + "/ping", { signal: AbortSignal.timeout(3000) });
-    const d   = await res.json();
-    if (d.status === "ok") {
-      box.innerText = "✅ เชื่อมต่อ Server สำเร็จ — พร้อมถอดเสียง";
-      setStatus("idle", "พร้อมใช้งาน");
-      return;
-    }
-  } catch (_) {}
-  box.innerText = "⚠️ ไม่พบ Python Server\nกรุณาเปิด Terminal แล้วรัน: python3 app.py";
+  // retry สูงสุด 10 ครั้ง ห่างกัน 3 วินาที รวม 30 วินาที
+  // รองรับกรณีโมเดล Typhoon กำลังโหลดครั้งแรก ซึ่งใช้เวลา 10-30 วินาที
+  for (let attempt = 1; attempt <= 10; attempt++) {
+    try {
+      box.innerText = `⏳ กำลังเชื่อมต่อ Server... (${attempt}/10)`;
+      const res = await fetch(PYTHON_URL + "/ping", { signal: AbortSignal.timeout(5000) });
+      const d   = await res.json();
+      if (d.status === "ok") {
+        box.innerText = "✅ เชื่อมต่อ Server สำเร็จ — พร้อมถอดเสียง";
+        setStatus("idle", "พร้อมใช้งาน");
+        return;
+      }
+    } catch (_) {}
+    if (attempt < 10) await new Promise(r => setTimeout(r, 3000));
+  }
+  box.innerText = "⚠️ ไม่พบ Python Server\nกรุณาตรวจสอบว่า Docker container รันอยู่:\n  docker compose up";
   setStatus("error", "ไม่พบ Python Server");
 }
 
