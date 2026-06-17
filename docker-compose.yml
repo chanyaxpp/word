@@ -1,0 +1,25 @@
+version: "3.9"
+
+services:
+  potjana-voice:
+    build: .
+    container_name: potjana-voice-dev
+    ports:
+      - "5001:5001"
+
+    # ── mount โฟลเดอร์ปัจจุบันเข้าไปใน container ──
+    # แก้ไขไฟล์ในเครื่องแล้ว Flask จะ reload ให้อัตโนมัติ
+    volumes:
+      - .:/app
+
+    environment:
+      - FLASK_ENV=development
+      - FLASK_DEBUG=1
+      - ANTHROPIC_API_KEY=${ANTHROPIC_API_KEY:-}   # ใส่ใน .env หรือ export ก็ได้
+
+    # cache โมเดล AI ไว้ข้ามรอบ restart (ไม่ต้องดาวน์โหลดซ้ำ)
+    # สร้างโฟลเดอร์ hf_cache ในเครื่องก่อนถ้ายังไม่มี
+    # volumes:
+    #   - ./hf_cache:/root/.cache/huggingface
+
+    restart: unless-stopped

@@ -3,7 +3,7 @@
    ========================================================= */
 function goBack() { window.location.href = "index.html"; }
 
-const PYTHON_URL     = "http://127.0.0.1:5001";
+const PYTHON_URL     = "http://192.168.55.53:5001";
 
 let recognition       = null;
 let currentEventSource = null;

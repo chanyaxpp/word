@@ -7,7 +7,7 @@ if (typeof pdfjsLib !== "undefined") {
   pdfjsLib.GlobalWorkerOptions.workerSrc = "libs/pdf.worker.min.js";
 }
 
-const PYTHON_SERVER_URL = "http://127.0.0.1:5001";
+const PYTHON_SERVER_URL = "http://192.168.55.53:5001";
 
 // ── state ──────────────────────────────────────────────────
 let _lastOriginalText   = "";   // ต้นฉบับล่าสุด (ใช้ใน download)

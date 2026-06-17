@@ -1,4 +1,4 @@
-from flask import Flask, request, jsonify, Response
+from flask import Flask, request, jsonify, Response, send_from_directory
 from transformers import pipeline, AutoModelForSpeechSeq2Seq, AutoProcessor
 from flask_cors import CORS
 import os
@@ -12,6 +12,14 @@ import traceback
 
 app = Flask(__name__)
 CORS(app)
+
+@app.route("/")
+def index():
+    return send_from_directory("/app", "index.html")
+
+@app.route("/<path:filename>")
+def static_files(filename):
+    return send_from_directory("/app", filename)
 
 app.config['MAX_CONTENT_LENGTH'] = 500 * 1024 * 1024
 
@@ -241,16 +249,15 @@ def summarize_text():
 
     api_key = os.environ.get("ANTHROPIC_API_KEY", "")
     if not api_key:
-        # fallback: สรุปแบบง่าย — เอาประโยคที่กระจายทั่วเนื้อหา (ต้น กลาง ท้าย)
-        sentences = [s.strip() for s in re.split(r'[.!?\n]+', text) if len(s.strip()) > 20]
-        n = len(sentences)
-        if n == 0:
-            return jsonify({"summary": text[:200]})
-        picks = []
-        if n >= 1: picks.append(sentences[0])
-        if n >= 3: picks.append(sentences[n // 2])
-        if n >= 2: picks.append(sentences[-1])
-        return jsonify({"summary": " ".join(picks)})
+        # fallback: extractive 3 ประโยคแรกที่ยาวสุด
+        sentences = [s.strip() for s in re.split(r'\n+|(?<=[.!?])\s+', text) if len(s.strip()) > 15]
+        top = sorted(sentences, key=len, reverse=True)[:3]
+        return jsonify({"summary": "\n".join(f"{i+1}. {s}" for i, s in enumerate(top))})
+
+    def extractive_fallback(t):
+        sentences = [s.strip() for s in re.split(r'\n+|(?<=[.!?])\s+', t) if len(s.strip()) > 15]
+        top = sorted(sentences, key=len, reverse=True)[:3]
+        return "\n".join(f"{i+1}. {s}" for i, s in enumerate(top))
 
     try:
         payload = json.dumps({
@@ -274,6 +281,14 @@ def summarize_text():
 
         summary = result["content"][0]["text"].strip()
         return jsonify({"summary": summary})
+
+    except _urllib_req.HTTPError as e:
+        if e.code in (401, 403):
+            print(f"[WARN /summarize] API key ไม่ถูกต้องหรือหมดอายุ (HTTP {e.code}) — ใช้ extractive fallback")
+            return jsonify({"summary": extractive_fallback(text)})
+        err = traceback.format_exc()
+        print(f"[ERROR /summarize Claude]\n{err}")
+        return jsonify({"error": str(e)}), 500
 
     except Exception as e:
         err = traceback.format_exc()
@@ -418,4 +433,5 @@ def transcribe_stream():
                     headers={"Cache-Control": "no-cache", "X-Accel-Buffering": "no"})
 
 if __name__ == "__main__":
-    app.run(host="127.0.0.1", port=5001, debug=False, threaded=True)
+    debug_mode = os.environ.get("FLASK_DEBUG", "0") == "1"
+    app.run(host="0.0.0.0", port=5001, debug=debug_mode, threaded=True, use_reloader=debug_mode)
